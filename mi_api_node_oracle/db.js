@@ -1,9 +1,6 @@
 require('dotenv').config();
 const oracledb = require('oracledb');
 
-// ⚠️ Activar modo "thick" con ruta al Oracle Instant Client
-oracledb.initOracleClient({ libDir: 'C:\\oracle\\instantclient_19_22' });
-
 oracledb.autoCommit = true;
 
 async function getConnection() {
