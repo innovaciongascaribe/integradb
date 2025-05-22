@@ -4,6 +4,7 @@ const morgan = require('morgan');
 const basicAuth = require('basic-auth');
 const { body, validationResult } = require('express-validator');
 const { getConnection } = require('./db');
+const oracledb = require('oracledb');
 
 const app = express();
 app.use(express.json());
@@ -150,6 +151,95 @@ app.delete('/personas/:id', async (req, res) => {
     res.status(500).json({ error: 'Error al eliminar persona' });
   }
 });
+
+app.post(
+  '/transaccion',
+  [
+  body('documentId').notEmpty().withMessage('documentId es obligatorio'),
+  body('documentTypeCode').notEmpty().withMessage('documentTypeCode es obligatorio'),
+  body('uuid').notEmpty().withMessage('uuid es obligatorio'),
+  body('supplierNit').notEmpty().withMessage('supplierNit es obligatorio'),
+  body('receiverNit').notEmpty().withMessage('receiverNit es obligatorio'),
+  body('documentDate').isNumeric().withMessage('documentDate debe ser timestamp'),
+  body('createdAt').isNumeric().withMessage('createdAt debe ser timestamp'),
+  body('orderReference').notEmpty().withMessage('orderReference es obligatorio'),
+  body('attachedDocumentUrl').notEmpty().withMessage('attachedDocumentUrl es obligatorio'),
+  body('xmlUrl').notEmpty().withMessage('xmlUrl es obligatorio'),
+  body('pdfUrl').notEmpty().withMessage('pdfUrl es obligatorio'),
+  // Opcionales pero si vienen, deben ser tipo string válidos
+  body('attachmentUrl')
+    .optional()
+    .isString().withMessage('attachmentUrl debe ser una cadena de texto'),
+  body('electronicMail')
+    .optional()
+    .isEmail().withMessage('electronicMail debe ser un email válido'),
+  body('actualDeliveryDate').isNumeric().withMessage('actualDeliveryDate debe ser timestamp')  
+],
+  async (req, res) => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) return res.status(400).json({ errores: errors.array() });
+
+    const jsonPayload = req.body;
+
+    try {
+      const connection = await getConnection();
+
+      const result = await connection.execute(
+        `
+        BEGIN
+          PKG_INTEGRACIONES.prcRegistraTransaccion(
+            :sistemaEmisor,
+            :token,
+            :sistemaReceptor,
+            :operacion,
+            :iclPayload,
+            :codigoError,
+            :mensajeError
+          );
+        END;
+        `,
+        {
+          sistemaEmisor: 'CADENA',
+          sistemaReceptor: 'ONBASE',
+          operacion: 'RECIVE_FACTRECEP',
+          token: 'PRUEBA TOKEN CADENA',
+          iclPayload: {
+            val: JSON.stringify(jsonPayload),
+            type: oracledb.CLOB
+          },
+          codigoError: { dir: oracledb.BIND_OUT, type: oracledb.NUMBER },
+          mensajeError: { dir: oracledb.BIND_OUT, type: oracledb.STRING, maxSize: 1000 }
+        }
+      );
+
+      await connection.close();
+
+      if (result.outBinds.codigoError !== 0) {
+        console.warn('Oracle devolvió error controlado:', result.outBinds);
+        return res.status(400).json({
+          mensaje: result.outBinds.mensajeError,
+          codigo: result.outBinds.codigoError
+        });
+      }
+
+      res.json({
+        mensaje: result.outBinds.mensajeError,
+        codigo: result.outBinds.codigoError
+      });
+
+    } catch (error) {
+      console.error('Error inesperado al ejecutar prcRegistraTransaccion:', {
+        message: error.message,
+        stack: error.stack
+      });
+
+      res.status(500).json({
+        mensaje: 'Error inesperado en el servidor',
+        detalle: error.message
+      });
+    }
+  }
+);
 
 // Iniciar servidor
 const port = process.env.PORT || 3000;
